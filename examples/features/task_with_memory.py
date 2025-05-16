@@ -1,11 +1,15 @@
 import asyncio
 import json
-from typing import List
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import anyio
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -47,7 +51,7 @@ class Link(BaseModel):
 
 
 class Links(BaseModel):
-	links: List[Link]
+	links: list[Link]
 
 
 initial_actions = [
@@ -90,8 +94,8 @@ async def main(max_steps=500):
 	else:
 		print('No result')
 
-	with open('result.json', 'w+') as f:
-		f.write(json.dumps(parsed_result, indent=4))
+	async with await anyio.open_file('result.json', 'w+') as f:
+		await f.write(json.dumps(parsed_result, indent=4))
 
 
 if __name__ == '__main__':
