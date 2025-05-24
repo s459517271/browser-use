@@ -1,7 +1,7 @@
 import asyncio
 import os
-import time
 
+import anyio
 from langchain_openai import ChatOpenAI
 
 from browser_use.agent.prompts import AgentMessagePrompt
@@ -59,9 +59,11 @@ async def test_focus_vs_all_elements():
 			# browser_binary_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 		)
 	)
-	context = BrowserContext(browser=browser, config=config)  # noqa: F821
+	context = BrowserContext(browser=browser, config=config)
 
 	websites = [
+		'https://demos.telerik.com/kendo-react-ui/treeview/overview/basic/func?theme=default-ocean-blue-a11y',
+		'https://www.ycombinator.com/companies',
 		'https://kayak.com/flights',
 		# 'https://en.wikipedia.org/wiki/Humanist_Party_of_Ontario',
 		# 'https://www.google.com/travel/flights?tfs=CBwQARoJagcIARIDTEpVGglyBwgBEgNMSlVAAUgBcAGCAQsI____________AZgBAQ&tfu=KgIIAw&hl=en-US&gl=US',
@@ -86,7 +88,7 @@ async def test_focus_vs_all_elements():
 		for website in websites:
 			# sleep 2
 			await page.goto(website)
-			time.sleep(1)
+			asyncio.sleep(1)
 
 			last_clicked_index = None  # Track the index for text input
 			while True:
@@ -95,7 +97,7 @@ async def test_focus_vs_all_elements():
 
 					# Get/refresh the state (includes removing old highlights)
 					print('\nGetting page state...')
-					all_elements_state = await context.get_state(True)
+					all_elements_state = await context.get_state_summary(True)
 
 					selector_map = all_elements_state.selector_map
 					total_elements = len(selector_map.keys())
@@ -103,7 +105,7 @@ async def test_focus_vs_all_elements():
 
 					# print(all_elements_state.element_tree.clickable_elements_to_string())
 					prompt = AgentMessagePrompt(
-						state=all_elements_state,
+						browser_state_summary=all_elements_state,
 						result=None,
 						include_attributes=DEFAULT_INCLUDE_ATTRIBUTES,
 						step_info=None,
@@ -112,8 +114,8 @@ async def test_focus_vs_all_elements():
 					# Write the user message to a file for analysis
 					user_message = prompt.get_user_message(use_vision=False).content
 					os.makedirs('./tmp', exist_ok=True)
-					with open('./tmp/user_message.txt', 'w', encoding='utf-8') as f:
-						f.write(user_message)
+					async with await anyio.open_file('./tmp/user_message.txt', 'w', encoding='utf-8') as f:
+						await f.write(user_message)
 
 					token_count, price = count_string_tokens(user_message, model='gpt-4o')
 					print(f'Prompt token count: {token_count}, price: {round(price, 4)} USD')

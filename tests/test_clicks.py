@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import anyio
 import pytest
 
 from browser_use.browser.browser import Browser, BrowserConfig
@@ -30,7 +31,7 @@ class ElementTreeSerializer:
 # run with: pytest browser_use/browser/tests/test_clicks.py
 @pytest.mark.asyncio
 async def test_highlight_elements():
-	browser = Browser(config=BrowserConfig(headless=False, disable_security=True))
+	browser = Browser(config=BrowserConfig(headless=False, disable_security=True, user_data_dir=None))
 
 	async with await browser.new_context() as context:
 		page = await context.get_current_page()
@@ -48,13 +49,14 @@ async def test_highlight_elements():
 		while True:
 			try:
 				# await asyncio.sleep(10)
-				state = await context.get_state(True)
+				state = await context.get_state_summary(True)
 
-				with open('./tmp/page.json', 'w') as f:
-					json.dump(
-						ElementTreeSerializer.dom_element_node_to_json(state.element_tree),
-						f,
-						indent=1,
+				async with await anyio.open_file('./tmp/page.json', 'w') as f:
+					await f.write(
+						json.dumps(
+							ElementTreeSerializer.dom_element_node_to_json(state.element_tree),
+							indent=1,
+						)
 					)
 
 				# await time_execution_sync('highlight_selector_map_elements')(
