@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from typing import Any, Optional, Type
+import re
+from pathlib import Path
+from typing import Any
 
+import anyio
 from langchain_core.messages import (
 	AIMessage,
 	BaseMessage,
@@ -14,6 +16,16 @@ from langchain_core.messages import (
 )
 
 logger = logging.getLogger(__name__)
+
+MODELS_WITHOUT_TOOL_SUPPORT_PATTERNS = [
+	'deepseek-reasoner',
+	'deepseek-r1',
+	'.*gemma.*-it',
+]
+
+
+def is_model_without_tool_support(model_name: str) -> bool:
+	return any(re.match(pattern, model_name) for pattern in MODELS_WITHOUT_TOOL_SUPPORT_PATTERNS)
 
 
 def extract_json_from_model_output(content: str) -> dict:
@@ -27,17 +39,27 @@ def extract_json_from_model_output(content: str) -> dict:
 			if '\n' in content:
 				content = content.split('\n', 1)[1]
 		# Parse the cleaned content
-		return json.loads(content)
+		result_dict = json.loads(content)
+
+		# some models occasionally respond with a list containing one dict: https://github.com/browser-use/browser-use/issues/1458
+		if isinstance(result_dict, list) and len(result_dict) == 1 and isinstance(result_dict[0], dict):
+			result_dict = result_dict[0]
+
+		assert isinstance(result_dict, dict), f'Expected JSON dictionary in response, got JSON {type(result_dict)} instead'
+		return result_dict
 	except json.JSONDecodeError as e:
 		logger.warning(f'Failed to parse model output: {content} {str(e)}')
 		raise ValueError('Could not parse response.')
 
 
-def convert_input_messages(input_messages: list[BaseMessage], model_name: Optional[str]) -> list[BaseMessage]:
+def convert_input_messages(input_messages: list[BaseMessage], model_name: str | None) -> list[BaseMessage]:
 	"""Convert input messages to a format that is compatible with the planner model"""
 	if model_name is None:
 		return input_messages
-	if model_name == 'deepseek-reasoner' or 'deepseek-r1' in model_name:
+
+	# TODO: use the auto-detected tool calling method from Agent._set_tool_calling_method(),
+	# or abstract that logic out to reuse so we can autodetect the planner model's tool calling method as well
+	if is_model_without_tool_support(model_name):
 		converted_input_messages = _convert_messages_for_non_function_calling_models(input_messages)
 		merged_input_messages = _merge_successive_messages(converted_input_messages, HumanMessage)
 		merged_input_messages = _merge_successive_messages(merged_input_messages, AIMessage)
@@ -67,7 +89,7 @@ def _convert_messages_for_non_function_calling_models(input_messages: list[BaseM
 	return output_messages
 
 
-def _merge_successive_messages(messages: list[BaseMessage], class_to_merge: Type[BaseMessage]) -> list[BaseMessage]:
+def _merge_successive_messages(messages: list[BaseMessage], class_to_merge: type[BaseMessage]) -> list[BaseMessage]:
 	"""Some models like deepseek-reasoner dont allow multiple human messages in a row. This function merges them into one."""
 	merged_messages = []
 	streak = 0
@@ -87,42 +109,46 @@ def _merge_successive_messages(messages: list[BaseMessage], class_to_merge: Type
 	return merged_messages
 
 
-def save_conversation(input_messages: list[BaseMessage], response: Any, target: str, encoding: Optional[str] = None) -> None:
-	"""Save conversation history to file."""
+async def save_conversation(
+	input_messages: list[BaseMessage], response: Any, target: str | Path, encoding: str | None = None
+) -> None:
+	"""Save conversation history to file asynchronously."""
+	target_path = Path(target)
 
 	# create folders if not exists
-	if dirname := os.path.dirname(target):
-		os.makedirs(dirname, exist_ok=True)
+	if target_path.parent:
+		await anyio.Path(target_path.parent).mkdir(parents=True, exist_ok=True)
 
-	with open(
-		target,
-		'w',
-		encoding=encoding,
-	) as f:
-		_write_messages_to_file(f, input_messages)
-		_write_response_to_file(f, response)
+	await anyio.Path(target_path).write_text(await _format_conversation(input_messages, response), encoding=encoding or 'utf-8')
 
 
-def _write_messages_to_file(f: Any, messages: list[BaseMessage]) -> None:
-	"""Write messages to conversation file"""
+async def _format_conversation(messages: list[BaseMessage], response: Any) -> str:
+	"""Format the conversation including messages and response."""
+	lines = []
+
+	# Format messages
 	for message in messages:
-		f.write(f' {message.__class__.__name__} \n')
+		lines.append(f' {message.__class__.__name__} ')
 
 		if isinstance(message.content, list):
 			for item in message.content:
 				if isinstance(item, dict) and item.get('type') == 'text':
-					f.write(item['text'].strip() + '\n')
+					lines.append(item['text'].strip())
 		elif isinstance(message.content, str):
 			try:
 				content = json.loads(message.content)
-				f.write(json.dumps(content, indent=2) + '\n')
+				lines.append(json.dumps(content, indent=2))
 			except json.JSONDecodeError:
-				f.write(message.content.strip() + '\n')
+				lines.append(message.content.strip())
 
-		f.write('\n')
+		lines.append('')  # Empty line after each message
+
+	# Format response
+	lines.append(' RESPONSE')
+	lines.append(json.dumps(json.loads(response.model_dump_json(exclude_unset=True)), indent=2))
+
+	return '\n'.join(lines)
 
 
-def _write_response_to_file(f: Any, response: Any) -> None:
-	"""Write model response to conversation file"""
-	f.write(' RESPONSE\n')
-	f.write(json.dumps(json.loads(response.model_dump_json(exclude_unset=True)), indent=2))
+# Note: _write_messages_to_file and _write_response_to_file have been merged into _format_conversation
+# This is more efficient for async operations and reduces file I/O
