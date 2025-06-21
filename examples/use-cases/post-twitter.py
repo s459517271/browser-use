@@ -22,19 +22,19 @@ Any issues, contact me on X @defichemist95
 import asyncio
 import os
 import sys
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from dataclasses import dataclass
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from langchain_openai import ChatOpenAI
 
 from browser_use import Agent, Controller
-from browser_use.browser.browser import Browser, BrowserConfig
+from browser_use.browser import BrowserProfile, BrowserSession
 
-# Load environment variables
-load_dotenv()
 if not os.getenv('OPENAI_API_KEY'):
 	raise ValueError('OPENAI_API_KEY is not set. Please add it to your environment variables.')
 
@@ -55,8 +55,11 @@ class TwitterConfig:
 
 
 # Customize these settings
+openai_key = os.getenv('OPENAI_API_KEY')
+assert openai_key is not None, 'OPENAI_API_KEY must be set'
+
 config = TwitterConfig(
-	openai_api_key=os.getenv('OPENAI_API_KEY'),
+	openai_api_key=openai_key,
 	chrome_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',  # This is for MacOS (Chrome)
 	target_user='XXXXX',
 	message='XXXXX',
@@ -66,14 +69,15 @@ config = TwitterConfig(
 
 
 def create_twitter_agent(config: TwitterConfig) -> Agent:
-	llm = ChatOpenAI(model=config.model, api_key=config.openai_api_key)
+	from pydantic import SecretStr
 
-	browser = Browser(
-		config=BrowserConfig(
-			headless=config.headless,
-			browser_binary_path=config.chrome_path,
-		)
+	llm = ChatOpenAI(model=config.model, api_key=SecretStr(config.openai_api_key))
+
+	browser_profile = BrowserProfile(
+		headless=config.headless,
+		executable_path=config.chrome_path,
 	)
+	browser_session = BrowserSession(browser_profile=browser_profile)
 
 	controller = Controller()
 
@@ -81,7 +85,7 @@ def create_twitter_agent(config: TwitterConfig) -> Agent:
 	full_message = f'@{config.target_user} {config.message}'
 
 	# Create the agent with detailed instructions
-	return Agent(
+	agent = Agent(
 		task=f"""Navigate to Twitter and create a post and reply to a tweet.
 
         Here are the specific steps:
@@ -105,14 +109,14 @@ def create_twitter_agent(config: TwitterConfig) -> Agent:
         """,
 		llm=llm,
 		controller=controller,
-		browser=browser,
+		browser_session=browser_session,
 	)
+	return agent
 
 
 async def post_tweet(agent: Agent):
 	try:
 		await agent.run(max_steps=100)
-		agent.create_history_gif()
 		print('Tweet posted successfully!')
 	except Exception as e:
 		print(f'Error posting tweet: {str(e)}')
