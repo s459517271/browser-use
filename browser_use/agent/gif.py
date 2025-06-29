@@ -5,16 +5,30 @@ import io
 import logging
 import os
 import platform
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from browser_use.agent.views import (
-	AgentHistoryList,
-)
+from browser_use.agent.views import AgentHistoryList
+from browser_use.config import CONFIG
 
 if TYPE_CHECKING:
 	from PIL import Image, ImageFont
 
 logger = logging.getLogger(__name__)
+
+
+def decode_unicode_escapes_to_utf8(text: str) -> str:
+	"""Handle decoding any unicode escape sequences embedded in a string (needed to render non-ASCII languages like chinese or arabic in the GIF overlay text)"""
+
+	if r'\u' not in text:
+		# doesn't have any escape sequences that need to be decoded
+		return text
+
+	try:
+		# Try to decode Unicode escape sequences
+		return text.encode('latin1').decode('unicode_escape')
+	except (UnicodeEncodeError, UnicodeDecodeError):
+		# logger.debug(f"Failed to decode unicode escape sequences while generating gif text: {text}")
+		return text
 
 
 def create_history_gif(
@@ -50,14 +64,24 @@ def create_history_gif(
 	try:
 		# Try different font options in order of preference
 		# ArialUni is a font that comes with Office and can render most non-alphabet characters
-		font_options = ['Helvetica', 'ArialUni', 'Arial', 'DejaVuSans', 'Verdana']
+		font_options = [
+			'Microsoft YaHei',  # 微软雅黑
+			'SimHei',  # 黑体
+			'SimSun',  # 宋体
+			'Noto Sans CJK SC',  # 思源黑体
+			'WenQuanYi Micro Hei',  # 文泉驿微米黑
+			'Helvetica',
+			'Arial',
+			'DejaVuSans',
+			'Verdana',
+		]
 		font_loaded = False
 
 		for font_name in font_options:
 			try:
 				if platform.system() == 'Windows':
 					# Need to specify the abs font path on Windows
-					font_name = os.path.join(os.getenv('WIN_FONT_DIR', 'C:\\Windows\\Fonts'), font_name + '.ttf')
+					font_name = os.path.join(CONFIG.WIN_FONT_DIR, font_name + '.ttf')
 				regular_font = ImageFont.truetype(font_name, font_size)
 				title_font = ImageFont.truetype(font_name, title_font_size)
 				goal_font = ImageFont.truetype(font_name, goal_font_size)
@@ -140,11 +164,11 @@ def create_history_gif(
 def _create_task_frame(
 	task: str,
 	first_screenshot: str,
-	title_font: 'ImageFont.FreeTypeFont',
-	regular_font: 'ImageFont.FreeTypeFont',
-	logo: Optional[Image.Image] = None,
+	title_font: ImageFont.FreeTypeFont,
+	regular_font: ImageFont.FreeTypeFont,
+	logo: Image.Image | None = None,
 	line_spacing: float = 1.5,
-) -> 'Image.Image':
+) -> Image.Image:
 	"""Create initial frame showing the task."""
 	from PIL import Image, ImageDraw, ImageFont
 
@@ -175,7 +199,7 @@ def _create_task_frame(
 	else:
 		font_size = base_font_size
 
-	larger_font = ImageFont.truetype(regular_font.path, font_size)
+	larger_font = ImageFont.truetype(regular_font.path, font_size)  # type: ignore
 
 	# Generate wrapped text with the calculated font size
 	wrapped_text = _wrap_text(task, larger_font, max_width)
@@ -213,20 +237,22 @@ def _create_task_frame(
 
 
 def _add_overlay_to_image(
-	image: 'Image.Image',
+	image: Image.Image,
 	step_number: int,
 	goal_text: str,
-	regular_font: 'ImageFont.FreeTypeFont',
-	title_font: 'ImageFont.FreeTypeFont',
+	regular_font: ImageFont.FreeTypeFont,
+	title_font: ImageFont.FreeTypeFont,
 	margin: int,
-	logo: Optional['Image.Image'] = None,
+	logo: Image.Image | None = None,
 	display_step: bool = True,
 	text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
 	text_box_color: tuple[int, int, int, int] = (0, 0, 0, 255),
-) -> 'Image.Image':
+) -> Image.Image:
 	"""Add step number and goal overlay to an image."""
+
 	from PIL import Image, ImageDraw
 
+	goal_text = decode_unicode_escapes_to_utf8(goal_text)
 	image = image.convert('RGBA')
 	txt_layer = Image.new('RGBA', image.size, (0, 0, 0, 0))
 	draw = ImageDraw.Draw(txt_layer)
@@ -310,7 +336,7 @@ def _add_overlay_to_image(
 	return result.convert('RGB')
 
 
-def _wrap_text(text: str, font: 'ImageFont.FreeTypeFont', max_width: int) -> str:
+def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
 	"""
 	Wrap text to fit within a given width.
 
@@ -322,6 +348,7 @@ def _wrap_text(text: str, font: 'ImageFont.FreeTypeFont', max_width: int) -> str
 	Returns:
 	    Wrapped text with newlines
 	"""
+	text = decode_unicode_escapes_to_utf8(text)
 	words = text.split()
 	lines = []
 	current_line = []

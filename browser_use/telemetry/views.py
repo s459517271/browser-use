@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Sequence
+from typing import Any
 
 
 @dataclass
@@ -11,53 +12,33 @@ class BaseTelemetryEvent(ABC):
 		pass
 
 	@property
-	def properties(self) -> Dict[str, Any]:
+	def properties(self) -> dict[str, Any]:
 		return {k: v for k, v in asdict(self).items() if k != 'name'}
 
 
 @dataclass
-class RegisteredFunction:
-	name: str
-	params: dict[str, Any]
-
-
-@dataclass
-class ControllerRegisteredFunctionsTelemetryEvent(BaseTelemetryEvent):
-	registered_functions: list[RegisteredFunction]
-	name: str = 'controller_registered_functions'
-
-
-@dataclass
-class AgentStepTelemetryEvent(BaseTelemetryEvent):
-	agent_id: str
-	step: int
-	step_error: list[str]
-	consecutive_failures: int
-	actions: list[dict]
-	name: str = 'agent_step'
-
-
-@dataclass
-class AgentRunTelemetryEvent(BaseTelemetryEvent):
-	agent_id: str
-	use_vision: bool
+class AgentTelemetryEvent(BaseTelemetryEvent):
+	# start details
 	task: str
-	model_name: str
-	chat_model_library: str
+	model: str
+	model_provider: str
+	planner_llm: str | None
+	max_steps: int
+	max_actions_per_step: int
+	use_vision: bool
+	use_validation: bool
 	version: str
 	source: str
-	name: str = 'agent_run'
-
-
-@dataclass
-class AgentEndTelemetryEvent(BaseTelemetryEvent):
-	agent_id: str
+	# step details
+	action_errors: Sequence[str | None]
+	action_history: Sequence[list[dict] | None]
+	urls_visited: Sequence[str | None]
+	# end details
 	steps: int
-	max_steps_reached: bool
-	is_done: bool
-	success: bool | None
 	total_input_tokens: int
 	total_duration_seconds: float
+	success: bool | None
+	final_result_response: str | None
+	error_message: str | None
 
-	errors: Sequence[str | None]
-	name: str = 'agent_end'
+	name: str = 'agent_event'
